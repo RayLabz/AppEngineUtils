@@ -1,11 +1,15 @@
 package com.raylabz.appengineutils.memcache;
 
-import com.google.appengine.api.memcache.*;
+import com.google.appengine.api.memcache.Expiration;
+import com.google.appengine.api.memcache.MemcacheService;
+import com.google.appengine.api.memcache.MemcacheServiceFactory;
 import com.google.gson.Gson;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.function.Consumer;
 
 public class Memcache {
 
@@ -28,11 +32,53 @@ public class Memcache {
         return map;
     }
 
+    public static <T> ArrayList<T> list(Class<T> aClass) {
+        final MemcacheService mainCache = Memcache.getMainCache();
+        final ArrayList<String> list = (ArrayList<String>) mainCache.get("entries-" + aClass.getName());
+        final ArrayList<T> items = new ArrayList<>();
+
+        for (String id : list) {
+            final T object = aClass.cast(MemcacheServiceFactory.getMemcacheService(aClass.getName()).get(id));
+            items.add(object);
+        }
+        return items;
+    }
+
+    public static <T> ArrayList<String> listIDs(Class<T> aClass) {
+        final MemcacheService mainCache = Memcache.getMainCache();
+        ArrayList<String> list = (ArrayList<String>) mainCache.get("entries-" + aClass.getName());
+        if (list != null) {
+            return list;
+        }
+        return new ArrayList<>();
+    }
+
+    public static <T> void forAll(Class<T> aClass, Consumer<? super T> action) {
+        final MemcacheService mainCache = Memcache.getMainCache();
+        final ArrayList<String> list = (ArrayList<String>) mainCache.get("entries-" + aClass.getName());
+        if (list != null) {
+            for (String id : list) {
+                final T object = aClass.cast(get(aClass, id));
+                action.accept(object);
+            }
+        }
+    }
+
     public static <T> void put(String id, T object, Expiration expiration) {
+        final MemcacheService mainCache = Memcache.getMainCache();
+        ArrayList<String> list = (ArrayList<String>) mainCache.get("entries-" + object.getClass().getName());
+        if (list == null) list = new ArrayList<>();
+        list.add(id);
+        mainCache.put("entries-" + object.getClass().getName(), object);
         MemcacheServiceFactory.getMemcacheService(object.getClass().getName()).put(id, gson.toJson(object), expiration);
     }
 
     public static <T> void put(String id, T object) {
+        final MemcacheService mainCache = Memcache.getMainCache();
+        ArrayList<String> list = (ArrayList<String>) mainCache.get("entries-" + object.getClass().getName());
+        if (list == null) list = new ArrayList<>();
+        list.add(id);
+        mainCache.put("entries-" + object.getClass().getName(), list);
         MemcacheServiceFactory.getMemcacheService(object.getClass().getName()).put(id, gson.toJson(object));
     }
 
@@ -62,12 +108,28 @@ public class Memcache {
 //        return MemcacheServiceFactory.getMemcacheService(aClass.getName()).putIfUntouched(map, expiration);
 //    }
 
-    public static <T> boolean delete(Class<T> aClass, String id) {
-        return MemcacheServiceFactory.getMemcacheService(aClass.getName()).delete(id);
+    public static <T> void delete(Class<T> aClass, String id) {
+        final MemcacheService mainCache = Memcache.getMainCache();
+        ArrayList<String> idList = (ArrayList<String>) mainCache.get("entries-" + aClass.getName());
+        for (String itemID : idList) {
+            if (itemID.equals(id)) {
+                MemcacheServiceFactory.getMemcacheService(aClass.getName()).delete(id);
+            }
+        }
+        idList = new ArrayList<>();
+        mainCache.put("entries-" + aClass.getName(), idList);
     }
 
-    public static <T> boolean delete(Class<T> aClass, String id, long noReAddMS) {
-        return MemcacheServiceFactory.getMemcacheService(aClass.getName()).delete(id, noReAddMS);
+    public static <T> void delete(Class<T> aClass, String id, long noReAddMS) {
+        final MemcacheService mainCache = Memcache.getMainCache();
+        final ArrayList<String> idList = (ArrayList<String>) mainCache.get("entries-" + aClass.getName());
+        for (String itemID : idList) {
+            if (itemID.equals(id)) {
+                idList.remove(id);
+                MemcacheServiceFactory.getMemcacheService(aClass.getName()).delete(id, noReAddMS);
+            }
+        }
+        mainCache.put("entries-" + aClass.getName(), idList);
     }
 
 //    public static <T> Set<String> deleteAll(Class<T> aClass, Collection<String> collection) {
@@ -103,6 +165,7 @@ public class Memcache {
 //    }
 
     public static <T> void clearAll(Class<T> aClass) {
+        getMainCache().delete("entries-" + aClass.getName());
         MemcacheServiceFactory.getMemcacheService(aClass.getName()).clearAll();
     }
 
